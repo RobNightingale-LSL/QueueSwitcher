@@ -1,4 +1,5 @@
 import {IInputs, IOutputs} from "./generated/ManifestTypes";
+import { QueueCount } from "./models/QueueCount";
 
 export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs, IOutputs> {
     
@@ -9,6 +10,8 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
     private _currentEntityName: string;
     private _currentEntityId: string;
     private _userId: string;
+    private _buttonCount: number;
+    readonly _buttonCountDefault: number = 5;
     
     private _resultDivContainer: HTMLDivElement;
 
@@ -46,6 +49,7 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
         //@ts-ignore
         this._currentEntityName = this._context.mode.contextInfo.entityTypeName;
         this._userId = this._context.userSettings.userId;
+        this._buttonCount = Number(this._context.parameters.buttonCount.raw || this._buttonCountDefault);
 	}
 
 	/**
@@ -102,33 +106,40 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
 
     private renderSwitcherDiv() {
         let thisRef = this;
-        debugger; //TODO: remove
         
-        //TODO get top 5 queues from queueitems where worked by = current        
-        thisRef._context.webAPI.retrieveMultipleRecords(QueueSwitcher._queueItemEntityName, "?$filter=_modifiedby_value eq " + thisRef._userId + "&$top=3&$orderby=modifiedon desc&$select=_queueid_value&$expand=queueid($select=queueid,name)").then(
+        thisRef._context.webAPI.retrieveMultipleRecords(QueueSwitcher._queueItemEntityName, "?$filter=_modifiedby_value eq " + thisRef._userId + "&$top=50&$orderby=modifiedon desc&$select=_queueid_value&$expand=queueid($select=queueid,name)").then(
             function (response: any) {
-                debugger;//TODO: remove
 
-                //TODO: loop the records for top 5 distinct values
-                /*var grouped = response.entities.reduce((g: any, person: QueueItem) => {
-                    g[person._queueid_value] = g[person._queueid_value] || []; //Check the value exists, if not assign a new array
-                    g[person._queueid_value].push(person); //Push the new value to the array
-
-                    return g; //Very important! you need to return the value of g or it will become undefined on the next pass
-                }, {});*/
+                let counter: QueueCount[] = [];
 
                 response.entities.forEach((qi: any) => {
-                    let createQueueSwitchButton = thisRef.createHTMLButtonElement(
-                        "Move to " + qi.queueid["name"] + " Queue",
-                        "qsButton-" + qi.queueid["queueid"],
-                        qi.queueid["queueid"],
-                        thisRef.createButtonOnClickHandler.bind(thisRef)
-                    );
-                    thisRef._container.appendChild(createQueueSwitchButton);
+                    let found = counter.find(i => i.queueId === qi.queueid["queueid"])
+                    if (found !== undefined) {
+                        found.count++;
+                    } else {
+                        //create new object and add to array
+                        let queue = new QueueCount(qi.queueid["name"], qi.queueid["queueid"], 1)
+                        counter.push(queue);
+                    }
+                });
+
+                counter.sort((a, b) => { return b.count - a.count });;
+
+                let topX = counter.slice(0, thisRef._buttonCount);
+
+                topX.forEach((qi: QueueCount) => {
+                    
+                        let createQueueSwitchButton = thisRef.createHTMLButtonElement(
+                            "Move to " + qi.queueName + " Queue",
+                            "qsButton-" + qi.queueId,
+                            qi.queueId,
+                            thisRef.createButtonOnClickHandler.bind(thisRef)
+                        );
+                        thisRef._container.appendChild(createQueueSwitchButton);
+                    
                 });
             },
             function (errorResponse: any) {
-                debugger;//TODO: remove
                 // Error handling code here - record failed to be created
                 thisRef.updateResultContainerTextWithErrorResponse(errorResponse);
             }
@@ -168,8 +179,6 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
         //check for active
         this._context.webAPI.retrieveMultipleRecords(QueueSwitcher._queueItemEntityName, "?$select=queueitemid,_queueid_value&$filter=_objectid_value eq " + thisRef._currentEntityId + " and statecode eq 0&$expand=queueid($select=queueid,name)").then(
             function (response: any) {
-                // Callback method for successful creation of new record
-                debugger;//TODO: remove
                 let resultHtml: string = "";
                 if (Array.isArray(response.entities) && response.entities.length > 0) {
                     resultHtml = "Current Queue: " + response.entities[0].queueid.name;
@@ -180,8 +189,6 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 thisRef.updateResultContainerText(resultHtml);
             },
             function (errorResponse: any) {
-                //debugger;
-                // Error handling code here - record failed to be created
                 thisRef.updateResultContainerTextWithErrorResponse(errorResponse);
             }
         );
@@ -194,7 +201,6 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
    */
     private createButtonOnClickHandler(event: Event): void {
         var thisRef = this;
-        debugger; //TODO: remove
 
         let queueGuid: string = (<HTMLInputElement>event.target!).attributes.getNamedItem("buttonvalue")!.value;      
         
@@ -235,17 +241,14 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 operationName: actionUniqueName
             }
         };
-
-        debugger; //TODO: remove
+        
         if (request) {
             //@ts-ignore
             Xrm.WebApi.online.execute(request).then(
                 function (result: any) {
-                    debugger;//TODO: remove
                     thisRef.grabCurrentQueue();
                 },
                 function (error: any) {
-                    debugger;//TODO: remove
                     thisRef.updateResultContainerTextWithErrorResponse(error.innerror.message);
                 }
             );

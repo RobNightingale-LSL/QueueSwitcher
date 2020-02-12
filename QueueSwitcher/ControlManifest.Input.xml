@@ -3,6 +3,7 @@
   <control namespace="LSL" constructor="QueueSwitcher" version="0.0.1" display-name-key="QueueSwitcher" description-key="QueueSwitcher description" control-type="standard">
     <!-- property node identifies a specific, configurable piece of data that the control expects from CDS -->
     <property name="sampleProperty" display-name-key="Property_Display_Key" description-key="Property_Desc_Key" of-type="SingleLine.Text" usage="bound" required="true" />
+    <property name="buttonCount" display-name-key="Number of Buttons" description-key="Enter the number of buttons to display. Must be a positive whole number." of-type="Whole.None" usage="input" required="true" />
     <!-- 
       Property node's of-type attribute can be of-type-group attribute. 
       Example:
