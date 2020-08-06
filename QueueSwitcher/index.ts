@@ -1,112 +1,129 @@
-import {IInputs, IOutputs} from "./generated/ManifestTypes";
-import { QueueCount } from "./models/QueueCount";
+import { IInputs, IOutputs } from "./generated/ManifestTypes";
+import * as React from 'react';
+import * as ReactDOM from 'react-dom';
+import { QueueSwitcherControl, IQueueSwitcherControlProps } from './QueueSwitcherControl';
 
 export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs, IOutputs> {
-    
-    private _container: HTMLDivElement;
-    private _context: ComponentFramework.Context<IInputs>;
-    //private _createQueueSwitchButton: HTMLButtonElement;
-    private static _queueItemEntityName: string = "queueitem";
-    private _currentEntityName: string;
-    private _currentEntityId: string;
-    private _userId: string;
-    private _buttonCount: number;
-    readonly _buttonCountDefault: number = 5;
-    
-    private _resultDivContainer: HTMLDivElement;
 
-    private _controlViewRendered: Boolean;
-    private notifyOutputChanged: () => void;
+    private container: HTMLDivElement;
+    private currentQueueId: string | null = null;
+    private currentRecordEntityType: string;
+    private currentRecordPKName: string;
+    private currentRecordId: string | null = null;
+    private webApi: ComponentFramework.WebApi;
+    private navigation: ComponentFramework.Navigation;
 
-	/**
-	 * Empty constructor.
-	 */
-	constructor()
-	{
+    constructor() {
+    }
 
-	}
-
-	/**
-	 * Used to initialize the control instance. Controls can kick off remote server calls and other initialization actions here.
-	 * Data-set values are not initialized here, use updateView.
-	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to property names defined in the manifest, as well as utility functions.
-	 * @param notifyOutputChanged A callback method to alert the framework that the control has new outputs ready to be retrieved asynchronously.
-	 * @param state A piece of data that persists in one session for a single user. Can be set at any point in a controls life cycle by calling 'setControlState' in the Mode interface.
-	 * @param container If a control is marked control-type='standard', it will receive an empty div element within which it can render its content.
-	 */
     public init(context: ComponentFramework.Context<IInputs>,
         notifyOutputChanged: () => void,
         state: ComponentFramework.Dictionary,
         container: HTMLDivElement) {
-        this._context = context;
-        this._controlViewRendered = false;
-        this._container = document.createElement("div");
-        this._container.classList.add("QueueSwitcher_Container");
-        container.appendChild(this._container);
-        //TODO get this supoorted
-        //@ts-ignore
-        this._currentEntityId = this._context.mode.contextInfo.entityId;
-        //@ts-ignore
-        this._currentEntityName = this._context.mode.contextInfo.entityTypeName;
-        this._userId = this._context.userSettings.userId;
-        this._buttonCount = Number(this._context.parameters.buttonCount.raw || this._buttonCountDefault);
-	}
-
-	/**
-	 * Called when any value in the property bag has changed. This includes field values, data-sets, global values such as container height and width, offline status, control metadata values such as label, visible, etc.
-	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to names defined in the manifest, as well as utility functions
-	 */
-	public updateView(context: ComponentFramework.Context<IInputs>): void
-	{
-        if (!this._controlViewRendered) {
-            this._controlViewRendered = true;
-            this.renderSwitcherDiv();
-            this.renderResultsDiv();
-        }
-	}
-
-	/** 
-	 * It is called by the framework prior to a control receiving new data. 
-	 * @returns an object based on nomenclature defined in manifest, expecting object[s] for property marked as “bound” or “output”
-	 */
-	public getOutputs(): IOutputs
-	{
-		return {};
-	}
-
-	/** 
-	 * Called when the control is to be removed from the DOM tree. Controls should use this call for cleanup.
-	 * i.e. cancelling any pending remote calls, removing listeners, etc.
-	 */
-	public destroy(): void
-	{
-		//TODO: Ask Andrii if any is needed here
-    }
-
-    private renderResultsDiv() {
-        // Render header label for result container
-        /*let resultDivHeader: HTMLDivElement = this.createHTMLDivElement(
-            "result_container",
-            true,
-            "Result of last action"
-        );*/
-        // Div elements to populate with the result text
-        this._resultDivContainer = this.createHTMLDivElement(
-            "result_container",
-            false,
-            undefined
-        );
-
-        //this._container.appendChild(resultDivHeader);
-        this._container.appendChild(this._resultDivContainer);
-
-        // Init the result container with a notification the control was loaded
-        this.updateResultContainerText("Web API sample custom control loaded");
-    }
-
-    private renderSwitcherDiv() {
-        let thisRef = this;
+        this.container = container;
+        this.webApi = context.webAPI;
+        this.navigation = context.navigation;
+        this.currentRecordEntityType = (<any>context.mode).contextInfo.entityTypeName;
         
+        let allPromises = [];
+        //@ts-ignore
+        allPromises.push(Xrm.Utility.getEntityMetadata(this.currentRecordEntityType));
+
+        allPromises.push(context.webAPI.retrieveMultipleRecords("queue","?$select=name,queueid&$filter=queueviewtype eq 0"));
+
+        if((<any>context.mode).contextInfo.entityId != null) {
+            this.currentRecordId = (<any>context.mode).contextInfo.entityId;
+
+            allPromises.push(context.webAPI.retrieveMultipleRecords("queueitem", "?$select=_queueid_value,queueitemid&$filter=_objectid_value eq " + this.currentRecordId));
+        }
+
+        Promise.all(allPromises).then((results) => {
+            this.currentRecordPKName = results[0].PrimaryIdAttribute;
+
+            let queueSwitcherProps: IQueueSwitcherControlProps = {
+                Queues: results[1].entities.map((queue: { queueid: any; name: any; }) => {
+                    return {
+                        key: queue.queueid,
+                        text: queue.name,
+                        iconProps: {
+                            iconName: "Assign"
+                        }
+                    };
+                }),
+                OnQueueChanged: this.moveToQueue,
+                SelectedQueue: results.length === 2 || results[2].entities.length === 0 ? null : results[2].entities[0]._queueid_value
+            };
+
+            ReactDOM.render(React.createElement(QueueSwitcherControl, queueSwitcherProps), this.container);
+        }, (e) => {
+            console.log(e);
+        });
+    }
+
+    private moveToQueue = (queueId: string) => {
+        this.currentQueueId = queueId;
+
+        if (this.currentRecordId == null) {
+            return;
+        }
+
+        let target: any = {
+            "@odata.type": "Microsoft.Dynamics.CRM." + this.currentRecordEntityType
+        };
+        target[this.currentRecordPKName] = this.currentRecordId;
+
+        const addToQueueRequest = {
+            entity: {
+                id: queueId,
+                entityType: "queue"
+            },
+            Target: target,
+            getMetadata: function() {
+                return {
+                    boundParameter: "entity",
+                    parameterTypes: {
+                        "entity": {
+                            "typeName": "mscrm.queue",
+                            "structuralProperty": 5
+                        },
+                        "Target": {
+                            "typeName": "mscrm.crmbaseentity",
+                            "structuralProperty": 5
+                        }
+                    },
+                    operationType: 0,
+                    operationName: "AddToQueue"
+                };
+            }
+        };
+        
+        (<any>this.webApi).execute(addToQueueRequest).then(
+            () => {},
+            (error: any) => {
+                this.navigation.openErrorDialog(error);
+            }
+        );    
+    }
+
+    public updateView(context: ComponentFramework.Context<IInputs>): void {
+        if (context.updatedProperties.includes("entityId")) {
+            this.currentRecordId = (<any>context.mode).contextInfo.entityId;
+            
+            this.currentQueueId && this.moveToQueue(this.currentQueueId);
+        }
+    }
+
+    public getOutputs(): IOutputs {
+        return {};
+    }
+
+    public destroy(): void {
+        ReactDOM.unmountComponentAtNode(this.container);
+    }
+
+    /*private renderSwitcherDiv() {
+        let thisRef = this;
+
         thisRef._context.webAPI.retrieveMultipleRecords(QueueSwitcher._queueItemEntityName, "?$filter=_modifiedby_value eq " + thisRef._userId + "&$top=50&$orderby=modifiedon desc&$select=_queueid_value&$expand=queueid($select=queueid,name)").then(
             function (response: any) {
 
@@ -128,15 +145,15 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 let topX = counter.slice(0, thisRef._buttonCount);
 
                 topX.forEach((qi: QueueCount) => {
-                    
-                        let createQueueSwitchButton = thisRef.createHTMLButtonElement(
-                            "Move to " + qi.queueName + " Queue",
-                            "qsButton-" + qi.queueId,
-                            qi.queueId,
-                            thisRef.createButtonOnClickHandler.bind(thisRef)
-                        );
-                        thisRef._container.appendChild(createQueueSwitchButton);
-                    
+
+                    let createQueueSwitchButton = thisRef.createHTMLButtonElement(
+                        "Move to " + qi.queueName + " Queue",
+                        "qsButton-" + qi.queueId,
+                        qi.queueId,
+                        thisRef.createButtonOnClickHandler.bind(thisRef)
+                    );
+                    thisRef._container.appendChild(createQueueSwitchButton);
+
                 });
             },
             function (errorResponse: any) {
@@ -144,9 +161,9 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 thisRef.updateResultContainerTextWithErrorResponse(errorResponse);
             }
         );
-        
+
         this.grabCurrentQueue();
-    }
+    }*/
 
     /**
    * Helper method to create HTML Button used for CreateRecord Web API Example
@@ -155,7 +172,7 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
    * @param buttonValue : value of button (attribute of button)
    * @param onClickHandler : onClick event handler to invoke for the button
    */
-    private createHTMLButtonElement(
+    /*private createHTMLButtonElement(
         buttonLabel: string,
         buttonId: string,
         buttonValue: string | null,
@@ -175,7 +192,7 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
     private grabCurrentQueue(): void {
         // store reference to 'this' so it can be used in the callback method
         var thisRef = this;
-               
+
         //check for active
         this._context.webAPI.retrieveMultipleRecords(QueueSwitcher._queueItemEntityName, "?$select=queueitemid,_queueid_value&$filter=_objectid_value eq " + thisRef._currentEntityId + " and statecode eq 0&$expand=queueid($select=queueid,name)").then(
             function (response: any) {
@@ -193,18 +210,18 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
             }
         );
 
-    }
+    }*/
 
     /**
    * Event Handler for onClick of button
    * @param event : click event
    */
-    private createButtonOnClickHandler(event: Event): void {
+    /*private createButtonOnClickHandler(event: Event): void {
         var thisRef = this;
 
-        let queueGuid: string = (<HTMLInputElement>event.target!).attributes.getNamedItem("buttonvalue")!.value;      
-        
-        this.AddToQueue("AddToQueue", queueGuid, thisRef._currentEntityId, thisRef._currentEntityName);        
+        let queueGuid: string = (<HTMLInputElement>event.target!).attributes.getNamedItem("buttonvalue")!.value;
+
+        this.AddToQueue("AddToQueue", queueGuid, thisRef._currentEntityId, thisRef._currentEntityName);
     }
 
     public AddToQueue(actionUniqueName: string, queueId: string, objectId: string, objectType: string): void {
@@ -241,7 +258,7 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 operationName: actionUniqueName
             }
         };
-        
+
         if (request) {
             //@ts-ignore
             Xrm.WebApi.online.execute(request).then(
@@ -253,23 +270,23 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
                 }
             );
         }
-    }
+    }*/
 
 
     /**
    * Helper method to inject HTML into result container div
    * @param message : HTML to inject into result container
    */
-    private updateResultContainerText(message: string): void {
+    /*private updateResultContainerText(message: string): void {
         if (this._resultDivContainer) {
             this._resultDivContainer.innerHTML = message;
         }
-    }
+    }*/
     /**
      * Helper method to inject error string into result container div after failed Web API call
      * @param errorResponse : error object from rejected promise
      */
-    private updateResultContainerTextWithErrorResponse(errorResponse: any): void {
+    /*private updateResultContainerTextWithErrorResponse(errorResponse: any): void {
         if (this._resultDivContainer) {
             // Retrieve the error message from the errorResponse and inject into the result div
             let errorHTML: string = "Error with this control:";
@@ -277,14 +294,14 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
             errorHTML += errorResponse.message;
             this._resultDivContainer.innerHTML = errorHTML;
         }
-    }
+    }*/
     /**
    * Helper method to create HTML Div Element
    * @param elementClassName : Class name of div element
    * @param isHeader : True if 'header' div - adds extra class and post-fix to ID for header elements
    * @param innerText : innerText of Div Element
    */
-    private createHTMLDivElement(
+    /*private createHTMLDivElement(
         elementClassName: string,
         isHeader: boolean,
         innerText?: string): HTMLDivElement {
@@ -298,5 +315,5 @@ export class QueueSwitcher implements ComponentFramework.StandardControl<IInputs
         }
         div.classList.add(elementClassName);
         return div;
-    }
+    }*/
 }

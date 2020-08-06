@@ -24,6 +24,7 @@
       -->
     </resources>
     <feature-usage>
+      <uses-feature name="Utility" required="true" />
       <uses-feature name="WebAPI" required="true" />
     </feature-usage>
     <!-- UNCOMMENT TO ENABLE THE SPECIFIED API
